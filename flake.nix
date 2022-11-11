@@ -30,22 +30,7 @@
           rust-analyzer
           cargo-deny
           cargo-release
-
-          pkg-config
-          openssl
-          alsa-lib
-          libudev-zero
-
-          vulkan-tools
-          vulkan-headers
           vulkan-loader
-          vulkan-validation-layers
-
-          xlibsWrapper
-          xorg.libX11
-          xorg.libXrandr
-          xorg.libXcursor
-          xorg.libXi
         ];
 
         LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath buildInputs;
