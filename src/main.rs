@@ -57,24 +57,35 @@ fn main() {
     .insert_resource(CursorPanState::default())
     .insert_resource(Options::default())
     .insert_resource(State::default())
+    .add_state(Stage::Prompt)
     .add_plugins(DefaultPlugins)
     .add_plugin(KDTreePlugin2D::<Boid>::default())
     .add_plugin(CursorPlugin)
     .add_plugin(EguiPlugin)
-    .add_startup_system(init_world)
-    .add_system(input::handle_keyboard_pan_and_zoom)
-    .add_system(input::handle_mouse_pan_and_zoom)
-    .add_system(handle_play_pause)
-    .add_system(cgol_gui)
+    .add_startup_system(startup)
+    .add_system_set(SystemSet::on_update(Stage::Prompt).with_system(prompt_gui))
+    .add_system_set(SystemSet::on_enter(Stage::Playing).with_system(init_world))
     .add_system_set(
-        SystemSet::new()
+        SystemSet::on_update(Stage::Playing)
+            .with_system(input::handle_keyboard_pan_and_zoom)
+            .with_system(input::handle_mouse_pan_and_zoom)
+            .with_system(handle_play_pause)
+            .with_system(cgol_gui),
+    )
+    .add_system_set(
+        SystemSet::on_update(Stage::Playing)
+            .with_run_criteria(FixedTimestep::steps_per_second(10.0))
+            .with_system(migrate),
+    )
+    .add_system_set(
+        SystemSet::on_update(Stage::Playing)
             .with_run_criteria(FixedTimestep::steps_per_second(15.0))
             .with_system(calculate_boid_color)
             .with_system(calculate_boid_rotation)
             .with_system(update_stats),
     )
     .add_system_set(
-        SystemSet::new()
+        SystemSet::on_update(Stage::Playing)
             .with_run_criteria(FixedTimestep::steps_per_second(60.0))
             .with_system(tick_boids),
     );
@@ -95,12 +106,7 @@ fn main() {
     app.run();
 }
 
-fn init_world(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
-    options: Res<Options>,
-) {
+fn startup(mut commands: Commands) {
     commands
         .spawn_bundle(Camera2dBundle {
             transform: Transform::default().with_scale(Vec3 {
@@ -111,7 +117,14 @@ fn init_world(
             ..Default::default()
         })
         .insert(Camera);
+}
 
+fn init_world(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+    options: Res<Options>,
+) {
     let mesh: Mesh2dHandle = meshes
         .add(Mesh::from(shape::RegularPolygon::new(0.5, 3)))
         .into();
@@ -119,6 +132,24 @@ fn init_world(
     for _ in 0..100 {
         spawn_boid(&mut commands, &mut materials, &options, mesh.clone());
     }
+}
+
+fn prompt_gui(
+    mut app_state: ResMut<bevy::prelude::State<Stage>>,
+    mut egui_ctx: ResMut<EguiContext>,
+) {
+    egui::Window::new("Options")
+        .vscroll(true)
+        .default_width(250.0)
+        .resizable(false)
+        .show(egui_ctx.ctx_mut(), |ui| {
+            ui.text_edit_multiline(&mut "It is fall and birds are migrating, watch them migrate");
+            if ui.button("Proceed").clicked() {
+                if let Err(e) = app_state.set(Stage::Playing) {
+                    eprintln!("Error: {e}");
+                };
+            }
+        });
 }
 
 fn cgol_gui(
@@ -251,6 +282,20 @@ fn cgol_gui(
             ui.label(format!("Boid Count: {}", state.boid_count));
 
             ui.separator();
+            ui.checkbox(&mut options.migration, "Migration");
+
+            ui.horizontal(|ui| {
+                ui.label("Migration Speed");
+                ui.add(egui::DragValue::new(&mut options.migration_speed).clamp_range(-5..=5));
+            });
+
+            if ui.button("Reset Migration").clicked() {
+                state.offset = 0;
+            }
+
+            ui.label(format!("Migration: {}", state.offset));
+
+            ui.separator();
             ui.label("Visual Options");
             ui.checkbox(&mut options.calculate_rotation, "Calculate Rotation");
             ui.checkbox(&mut options.calculate_color, "Calculate Color");
@@ -283,6 +328,12 @@ fn handle_play_pause(keyboard_input: Res<Input<KeyCode>>, mut options: ResMut<Op
     }
 }
 
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+enum Stage {
+    Prompt,
+    Playing,
+}
+
 struct Options {
     paused: bool,
     visibility_range: f32,
@@ -308,6 +359,9 @@ struct Options {
 
     spawn_amount: i32,
 
+    migration: bool,
+    migration_speed: i32,
+
     calculate_rotation: bool,
     calculate_color: bool,
     foreground_color: [f32; 3],
@@ -317,6 +371,7 @@ struct Options {
 struct State {
     boid_count: u32,
     prev_calculating_color: bool,
+    offset: i32,
 }
 
 impl Default for Options {
@@ -343,6 +398,8 @@ impl Default for Options {
             calculate_color: true,
             foreground_color: [0.0, 1.0, 0.0915],
             background_color: [0.0, 0.0, 0.0],
+            migration: false,
+            migration_speed: 1,
         }
     }
 }
@@ -352,6 +409,7 @@ impl Default for State {
         Self {
             boid_count: 0,
             prev_calculating_color: true,
+            offset: 0,
         }
     }
 }
@@ -459,9 +517,16 @@ fn update_stats(mut state: ResMut<State>, query: Query<&Boid>) {
     state.boid_count = query.iter().len() as u32;
 }
 
+fn migrate(options: Res<Options>, mut state: ResMut<State>) {
+    if options.migration && !options.paused {
+        state.offset += options.migration_speed;
+    }
+}
+
 fn tick_boids(
     mut query: Query<(Entity, &mut Boid, &mut Transform)>,
     options: Res<Options>,
+    state: Res<State>,
     tree: Res<BoidNNTree>,
 ) {
     if options.paused {
@@ -541,11 +606,11 @@ fn tick_boids(
         // Bounding boxes
         if options.border {
             let size = options.border_size as f32;
-            if transform.translation.x > size {
+            if transform.translation.x > (size + state.offset as f32) {
                 boid.vx -= options.border_impact;
             }
 
-            if transform.translation.x < -size {
+            if transform.translation.x < -(size - state.offset as f32) {
                 boid.vx += options.border_impact;
             }
 
