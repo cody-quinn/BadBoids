@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <link rel="icon" href="data:," />
+    <title>Boids</title>
+  </head>
+  <body>
+    <script type="module">
+      // Starting up our boids
+      import init from "./boids.js";
+      init().finally((x) => document.getElementById("loading").remove());
+
+      // Preventing the context menu from being opened
+      document.addEventListener("contextmenu", (ev) => {
+        ev.preventDefault();
+      });
+    </script>
+    <style type="text/css">
+      html {
+        box-sizing: border-box;
+      }
+
+      *,
+      *::before,
+      *::after {
+        margin: 0;
+        padding: 0;
+        box-sizing: inherit;
+      }
+
+      canvas {
+        background-color: black;
+        outline: none;
+        position: absolute;
+      }
+    </style>
+    <h1 id="loading">Loading...</h1>
+  </body>
+</html>
